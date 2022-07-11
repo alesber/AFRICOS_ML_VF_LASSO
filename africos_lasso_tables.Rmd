@@ -1,0 +1,139 @@
+---
+title: "Classification of Viral Failure in AFRICOS (Enrollment Visit)"
+author: "Allahna Esber"
+date: "1 July 2021"
+output:
+  word_document: default
+  powerpoint_presentation: default
+  html_document:
+    df_print: paged
+  pdf_document: default
+slide_level: 3
+---
+
+```{r message=F, warning=F, echo=F}
+# installing/loading the package
+# if(!require(installr)) { install.packages("installr"); require(installr)} #load / install+load installr
+
+# Installing pandoc
+# install.pandoc()
+
+# rmarkdown::pandoc_version()
+
+library(rmarkdown)
+library(sjPlot)
+library(readstata13)
+library(glmnet)
+library(MASS)
+library(caret)
+library(dplyr)
+library(tidyr)
+library(tidyverse)
+library(c060)
+library(peperr)
+library(pscl)
+library(pROC)
+library(ggplot2)
+library(generalhoslem)
+library(gtsummary)
+library(table1)
+test <- read.dta13("ml_analysis_v1_onart_v3.dta", generate.factors=T, nonint.factors=T)
+vis1 <- test[which(test$visit==1),]
+
+#Removing any missing values
+vis1 = na.omit(vis1)
+A2=vis1[,c(1,3,5:15, 17:100, 102)]
+
+
+variable.names = colnames(A2)
+boolean = !(variable.names %in% 'vf')
+Xdataframe = A2[,boolean]
+Yvariable = A2[,!boolean]
+Yvariable <-  factor(A2$vf) 
+Xdataframe <- as.data.frame(Xdataframe)  # Converts tibble to data frame
+
+
+#converting variables to fact0r 
+names <- c(1:4,6:12,14:24,26:74,76:81, 83:86, 89:97) 
+namesvf <- c(1:4,6:12,14:24,26:74,76:81, 83:86, 89:98) 
+Xdataframe[,names]<-lapply(Xdataframe[,names],factor)
+A2[,namesvf]<-lapply(A2[,namesvf],factor)
+
+some.matrix <-data.matrix(Xdataframe) #converts dataframe to matrix 
+
+#Labeling variables for table 1
+label(A2$agev) <- "Age"
+label(A2$gender) <- "Sex"
+label(A2$progid) <- "Study site"
+label(A2$dur_art) <- "Duration on ART"
+label(A2$ARTp) <- "ART Regimen"
+A2$vf <-factor(A2$vf, levels=c(0,1), labels=c("VL<1000 c/mL", "VL 1000+ c/mL"))
+label(A2$vf) <- "Virologic failure"
+```
+
+### Table 1
+```{r message=F, warning=F, echo=F}
+table1(~ progid + agev + gender + dur_art + ARTp | vf, dat=A2)
+```
+
+```{r message=F, warning=F, echo=F}
+out = glmnet(some.matrix, Yvariable, alpha = 1, family="binomial") # Fit lasso model on full dataset
+plot(out, xvar="lambda")
+```
+
+```{r message=F, warning=F, echo=T}
+logdev <- glm(vf ~  progid +  missarv  + agev +  cd4_cat, data=A2, family = "binomial")
+```
+
+```{r message=F, warning=F, echo=F}
+pR2(logdev)
+logitgof(A2$vf, fitted(logdev))
+```
+### Logistic Regression- ORs
+```{r message=F, warning=F, echo=F}
+tbl_regression(logdev, exponentiate= TRUE)
+```
+
+
+### ROC Curve for DEV
+```{r message=F, warning=F, echo=T}
+roc(A2$vf, as.vector(fitted.values(logdev)), percent=F,   boot.n=1000, ci.alpha=0.9, stratified=FALSE, plot=TRUE, grid=TRUE, show.thres=TRUE, legacy.axes = TRUE, reuse.auc = TRUE,
+# print.thres = c(0.30,0.35, 0.40, 0.45,0.48, 0.50,0.55, 0.60),#
+print.auc = TRUE, print.thres.col = "blue", ci=TRUE, ci.type="bars", print.thres.cex = 0.7, main = paste("ROC curve using","(N = ",nrow(A2),")") )
+```
+
+### Lasso regression- AUC
+```{r message=F, warning=F, echo=F}
+#lasso regression
+set.seed(501)
+auc.out = cv.glmnet(some.matrix, Yvariable, alpha = 1, family="binomial", type.measure = "auc", nfolds= 10) # Fit lasso model on training data
+plot(auc.out) # Draw plot of training deviance as a function of lambda
+auclam = auc.out$lambda.1se# select lambda + 1 SE
+assess.glmnet(auc.out, newx = some.matrix, newy = Yvariable)
+```
+
+
+### Lasso regression- AUC
+
+```{r message=F, warning=F, echo=F}
+lasso_auc = predict(out, type = "coefficients", s = auclam)[1:98,] 
+lasso_auc[lasso_auc!= 0]
+
+```
+### Logistic Regression output- AUC 
+```{r message=F, warning=F, echo=T}
+logauc <- glm(vf ~ progid + employed +  cho199  + dx11a17x4 + missarv  +  dur_art + kids + agev + cd4_cat, data=A2, family = "binomial")
+summary(logauc)
+pR2(logauc)
+```
+### Logistic Regression output- AUC
+```{r message=F, warning=F, echo=F}
+logitgof(A2$vf, fitted(logauc))
+tbl_regression(logauc, exponentiate= TRUE)
+```
+### ROC Curve for AUC
+```{r message=F, warning=F, echo=F}
+roc(A2$vf, as.vector(fitted.values(logauc)), percent=F,   boot.n=1000, ci.alpha=0.9, stratified=FALSE, plot=TRUE, grid=TRUE, show.thres=TRUE, legacy.axes = TRUE, reuse.auc = TRUE,
+# print.thres = c(0.30,0.35, 0.40, 0.45,0.48, 0.50,0.55, 0.60),#
+print.auc = TRUE, print.thres.col = "blue", ci=TRUE, ci.type="bars", print.thres.cex = 0.7, main = paste("ROC curve using","(N = ",nrow(A2),")") )
+```
